@@ -1,0 +1,47 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum CATEGORY {
+  ai
+  webdev
+  saas
+  hardware
+  software
+  llm
+  startup
+  backend
+  security
+  cloud
+  mobile
+}
+
+model Article {
+  id           String   @id @default(uuid())
+  title        String
+  url          String   @unique
+  description  String
+  source       String
+  published_at DateTime
+
+  summary    String?
+  category   CATEGORY[]
+  created_at DateTime   @default(now())
+}
+
+// supposed to be singleton (on self hosted version)
+model User {
+  id          String     @id @default(uuid())
+  email       String     @unique
+  preferences CATEGORY[]
+}
