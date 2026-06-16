@@ -36,6 +36,7 @@ model Article {
 
   summary    String?
   category   CATEGORY[]
+  embedding  Unsupported("vector(768)")?
   created_at DateTime   @default(now())
 }
 

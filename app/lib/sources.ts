@@ -10,10 +10,14 @@ export type Source = {
 };
 
 // --- TechCrunch -------------------------------------------------------------
-// Clean one-liner snippets out of the box. No site-specific config needed.
+// Clean one-liner snippets out of the box. One exception: the recurring
+// "TechCrunch Mobility" newsletter column carries boilerplate intro text
+// ("Welcome back to TechCrunch Mobility...") instead of a real story snippet,
+// so drop it via its URL slug.
 const techcrunch: Source = {
   name: "techcrunch",
   url: "https://techcrunch.com/feed/",
+  filter: (link) => !/\/techcrunch-mobility-/.test(link),
 };
 
 // --- Ars Technica -----------------------------------------------------------

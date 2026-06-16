@@ -1,0 +1,36 @@
+name: ingest
+
+# GitHub-hosted cron. Times are UTC. Scheduled runs are best-effort —
+# GitHub may delay them by several minutes under load, and disables the
+# schedule after 60 days of repo inactivity. The pipeline is idempotent,
+# so a delayed or skipped run self-heals on the next cycle.
+on:
+  schedule:
+    - cron: "0 */3 * * *" # every 3 hours: 00,03,06,09,12,15,18,21 UTC
+  workflow_dispatch: {} # manual trigger from the Actions tab (for testing)
+
+# Don't pile up overlapping runs if one is slow.
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger ingest endpoint
+        env:
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/body.json -w "%{http_code}" \
+            -X POST "$INGEST_URL" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            --max-time 90 --retry 2 --retry-delay 10)
+          echo "HTTP $code"
+          echo "Response body:"
+          cat /tmp/body.json || true
+          echo
+          # Fail the job (red X in the Actions log) on any non-200.
+          test "$code" = "200"
