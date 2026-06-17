@@ -5,6 +5,13 @@ import { SOURCES, type Source } from "./sources";
 
 const parser = new Parser({
   requestOptions: { agent: new Agent({ keepAlive: false }) },
+  // Fail fast on a hanging feed. rss-parser's default is 60s — on Vercel that
+  // would eat the entire maxDuration budget (Promise.all waits for the slowest
+  // feed) and the whole ingest times out at the platform level. With a short
+  // timeout, a slow feed errors quickly, the per-source try/catch below
+  // contains it (returns []), and the other feeds + the rest of the pipeline
+  // proceed normally. Tune if a legitimately slow feed gets cut off.
+  timeout: 15000,
 });
 
 async function fetchSource(source: Source): Promise<NewsItem[]> {

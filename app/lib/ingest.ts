@@ -62,13 +62,27 @@ export async function ingest(): Promise<{ fetched: number; inserted: number }> {
   // 7 bound params per row (id is generated server-side); Postgres caps at
   // ~65535 params, so this stays safe well past our ~hundreds-per-run volume.
   const COLS_PER_ROW = 7;
+  const EMBED_DIM = 768;
   const values: unknown[] = [];
   const tuples: string[] = [];
 
   fresh.forEach((f, i) => {
+    const vec = embeddings[i];
+    // A row's embedding MUST be a full 768-dim vector. A missing/short one
+    // (e.g. a partial Jina response) makes pgvector reject a dimension
+    // mismatch — and since this is ONE multi-row statement, a single bad row
+    // would abort the entire insert and lose every fresh row this cycle. Skip
+    // the bad row instead; it self-heals next cycle.
+    if (!Array.isArray(vec) || vec.length !== EMBED_DIM) {
+      console.warn(
+        `[ingest] skipping ${f.url} — invalid embedding (len ${vec?.length ?? 0})`,
+      );
+      return;
+    }
     const cats = categories[i] ?? [];
-    const vec = embeddings[i] ?? [];
-    const base = i * COLS_PER_ROW;
+    // Offset is based on rows ALREADY included (tuples.length), not i, so
+    // placeholder indices stay contiguous even when rows above were skipped.
+    const base = tuples.length * COLS_PER_ROW;
     tuples.push(
       `(gen_random_uuid(), $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}::"CATEGORY"[], $${base + 7}::vector)`,
     );
@@ -82,6 +96,11 @@ export async function ingest(): Promise<{ fetched: number; inserted: number }> {
       `[${vec.join(",")}]`, // pgvector literal
     );
   });
+
+  // Everything got filtered out (all embeddings invalid) — nothing to insert.
+  if (tuples.length === 0) {
+    return { fetched: items.length, inserted: 0 };
+  }
 
   const sql =
     `INSERT INTO "Article" (id, title, url, description, source, published_at, category, embedding) ` +

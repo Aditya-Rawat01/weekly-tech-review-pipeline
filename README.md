@@ -43,10 +43,25 @@ render grouped by category → send via Resend.
 | TechCrunch | `techcrunch.com/feed/` | filter out the recurring "TechCrunch Mobility" newsletter column (URL slug `techcrunch-mobility-`) — boilerplate intro, no real story snippet |
 | Ars Technica | `feeds.arstechnica.com/arstechnica/index` | **section allowlist** on URL path (`ai, security, tech-policy, gadgets, google`); fails closed, drops culture/science/health/cars/space |
 | VentureBeat | `venturebeat.com/feed/` | snippet is the **full article body** → truncate to first 2 sentences |
+| The Register | `theregister.com/headlines.atom` | clean one-liners but broad; **section allowlist** (same first-path-segment scheme as Ars): security, cyber-crime, software, systems, networks, databases, ai-and-ml, os-platforms, cloud, devops, storage, virtualization, personal-tech. Fails closed (drops science/hpc/public-sector/offbeat) |
+| BleepingComputer | `bleepingcomputer.com/feed/` | clean security snippets; only strip the trailing `[...]` truncation marker (ASCII dots, which `cleanText`'s `…` trim misses) |
+| The Next Web | `thenextweb.com/feed` | ships the **full article body** (like VentureBeat) → reuse the first-2-sentences truncation |
 
 **Dropped:** The Verge (Atom feed, broad topics, image-caption leaks that can't
 be cleaned deterministically — undermines zero-hallucination), Hacker News
 (aggregator with no content of its own; titles + points only).
+
+**Evaluated, skipped (via `temp/test-feeds.ts` harness):** Wired (feed polluted
+with affiliate/coupon-code posts), TechRadar (feed URL redirects to `http:`,
+rss-parser rejects), InfoQ (HTTP 406 — blocks the default user-agent), Engadget
+(clean, but numeric-ID URLs expose no section path → can't allowlist; available
+as a future 7th source if broad consumer-hardware coverage is wanted).
+
+### Section allowlist (Ars + The Register)
+Both encode the section as the first URL path segment, so a shared
+`firstPathSegment()` helper feeds each source's own allowlist `Set`. Fails
+closed — unknown/unlisted sections are dropped, so over-listing slugs is
+harmless (they simply never match).
 
 ### Cleaning pipeline (shared, per item)
 strip HTML → `he.decode()` → normalize whitespace (`\u00A0`→space, collapse
@@ -60,10 +75,13 @@ junk (`/video/`, `post_type=`) → URL-dedup → validate non-empty.
 ```
 app/lib/
   clean.ts        Shared once: NewsItem type, cleanText, canonicalizeUrl, isJunkLink
-  sources.ts      Per-source config — Ars allowlist + VB sentence-split live here
-                  (site-specific logic is NOT generalized into the runner)
-  fetch-feeds.ts  Generic runner: parallel fetch, per-feed try/catch,
-                  keepAlive:false agent (so the process exits cleanly)
+  sources.ts      Per-source config (6 sources) — section allowlists (Ars +
+                  Register) and full-body truncation (VB + TNW) live here;
+                  shared firstPathSegment() helper. Site-specific logic is NOT
+                  generalized into the runner.
+  fetch-feeds.ts  Generic runner: parallel fetch, per-feed try/catch (one feed
+                  failing → []), 15s timeout (a hang can't eat the maxDuration
+                  budget), keepAlive:false agent (so the process exits cleanly)
   db.ts           Prisma client singleton (pg adapter + Neon)
   groq.ts         LLM client — OpenAI SDK pointed at Groq (provider-agnostic),
                   complete() with retry/backoff for 429 / 5xx
@@ -76,14 +94,22 @@ app/lib/
                   categorize + embed fresh only → single bulk raw-SQL upsert
                   (multi-row INSERT … ON CONFLICT (url) DO NOTHING)
   cleanup.ts      Delete articles older than 2 weeks (single deleteMany)
+  auth.ts         isAuthorized() — shared constant-time Bearer check (both routes)
 
 app/api/
-  ingest/route.ts POST handler — Bearer-secret auth (timingSafeEqual), Node
-                  runtime, maxDuration=60; calls ingest(). The cron's entrypoint.
+  ingest/route.ts  POST — Bearer auth, Node runtime, maxDuration=60; calls
+                   ingest(). The 6h cron's entrypoint.
+  cleanup/route.ts POST — same auth; calls cleanup(). The weekly cron's entrypoint.
 
 .github/workflows/
-  ingest.yml      GitHub Actions cron (every 6h UTC + manual dispatch) that
-                  curls /api/ingest with the shared secret; fails on non-200.
+  ingest.yml      Manual trigger (workflow_dispatch) that curls /api/ingest with
+                  the shared secret; fails on non-200. The `schedule:` block is
+                  commented out (GitHub free-tier cron is unreliable — see
+                  decisions log); uncomment it on a paid GitHub plan, else use
+                  EasyCron as the external scheduler.
+  cleanup.yml     Weekly trigger (Sun 03:00 UTC) that curls /api/cleanup. Here
+                  the `schedule:` stays ENABLED — cron drift is harmless for a
+                  weekly delete.
 
 prisma/
   schema.prisma   Article + User models, CATEGORY enum (11 labels),
@@ -119,6 +145,9 @@ app/generated/prisma/   Generated client (output configured in schema)
   to Neon. Instead: one parameterized multi-row `INSERT … ON CONFLICT (url) DO
   NOTHING`. Values are bound (injection-safe); only placeholder indices are
   built from trusted code. ~7 params/row keeps us far under Postgres's 65535 cap.
+  Each row's embedding is validated to 768 dims before inclusion — a bad/partial
+  vector would otherwise abort the whole multi-row statement, so invalid rows are
+  skipped (logged, self-heal next cycle) rather than losing the entire batch.
 - **No article extraction.** Rejected Jina Reader (one-time token grant
   depletes) and self-scraping (hallucination risk). LLM only rephrases
   title+snippet, never expands.
@@ -131,14 +160,20 @@ app/generated/prisma/   Generated client (output configured in schema)
   only when isoDate absent.
 - **Real cron, not recursive setTimeout** (setTimeout drifts / skips windows on
   restart). DB dedup makes a missed run harmless.
-- **Cron via GitHub Actions, not Vercel Cron.** Vercel Cron on the Hobby tier
-  fires at most once per day — too coarse for a 6h cadence. GitHub Actions
-  (`0 */6 * * *`, UTC) hits a Vercel route handler (`/api/ingest`) instead.
-  Caveat: GitHub's scheduler is best-effort (can lag minutes under load, and
-  auto-disables after 60 days of repo inactivity) — fine here because the
-  pipeline self-heals on the next cycle. The pipeline runs *on Vercel* (the
-  route calls `ingest()`); the Action is just the trigger. Measured ~3.8s for a
-  no-op cycle, well under the 60s `maxDuration` ceiling.
+- **Cron: external scheduler (EasyCron) on free tier, GitHub Actions only on a
+  paid GitHub plan.** Vercel Cron on the Hobby tier fires at most once per day —
+  too coarse for a 6h cadence. GitHub Actions was the first pick, but its hosted
+  cron heavily deprioritizes *free-tier* scheduled runs: an overnight test at a
+  3h interval actually fired at 04:21 then 09:12 (~5h gap). So the `schedule:`
+  trigger in `ingest.yml` is **commented out**; `workflow_dispatch` (one-click
+  manual run) stays. The trigger is now an **external cron service (EasyCron,
+  free tier)** that POSTs the secret to the same `/api/ingest` route. On a paid
+  GitHub plan (Pro/Team/Enterprise) scheduled runs are prioritized/reliable —
+  there you can just uncomment the `schedule:` lines and skip EasyCron entirely.
+  Either way the endpoint is **trigger-agnostic**: it only checks the Bearer
+  secret + POST, so swapping schedulers needs zero code change. The pipeline
+  runs *on Vercel* (the route calls `ingest()`); the scheduler is just the
+  trigger. Measured ~3.8s for a no-op cycle, well under the 60s `maxDuration`.
 - **Endpoint auth: shared secret, constant-time compare.** `/api/ingest`
   requires `Authorization: Bearer $CRON_SECRET`, checked with
   `crypto.timingSafeEqual` (a plain `===` leaks the secret via response timing).
@@ -183,7 +218,10 @@ app/generated/prisma/   Generated client (output configured in schema)
       `{security}`, `{mobile,ai}`). Model is `llama-3.3-70b-versatile` (see
       decisions log); `categorizeBatch` now degrades a failed batch to `[]`
       instead of crashing the run.
-- [x] DB cleanup: delete articles older than 2 weeks (`cleanup.ts`).
+- [x] DB cleanup: delete articles older than 2 weeks (`cleanup.ts`), exposed as
+      `/api/cleanup` (shared Bearer auth) and triggered by a weekly GitHub
+      workflow (`cleanup.yml`, Sun 03:00 UTC). Local smoke test: 401 / 200
+      `{deleted:0}`.
 - [x] **Embeddings at ingest** (`embed.ts`): Jina Embeddings API
       (`jina-embeddings-v2-base-en`, 768-dim), title+description concatenated,
       batches of 64, retry/backoff. Categorize + embed run in parallel
@@ -196,11 +234,17 @@ app/generated/prisma/   Generated client (output configured in schema)
       `force-dynamic`. `next build` clean (route is `ƒ /api/ingest`). Local
       smoke test: no-auth→401, wrong→401, GET→405, correct→200 with a full
       ingest in ~3.8s.
-- [x] **Ingest cron trigger** (`.github/workflows/ingest.yml`): GitHub Actions
-      `0 */6 * * *` (UTC) + manual dispatch, curls the endpoint with the secret,
-      fails the job on non-200. *Deployment pending: needs Vercel deploy +
-      `CRON_SECRET`/`INGEST_URL` secrets set — validating overnight via the
-      Actions logs.*
+- [x] **Ingest endpoint trigger** (`.github/workflows/ingest.yml` +
+      external cron): the route + auth deployed; `workflow_dispatch` verified
+      end-to-end (a wrong `INGEST_URL` returned 405, fixed → 200 with 0 inserts).
+      GitHub's free-tier `schedule:` proved unreliable overnight (3h interval
+      drifted to 04:21 → 09:12), so it's commented out and **EasyCron** (free
+      tier, POST + Bearer header) is the scheduler. Paid GitHub plans can
+      re-enable `schedule:` instead.
+
+### Pending
+- [ ] Stand up the EasyCron job (POST `…/api/ingest`, `Authorization: Bearer
+      $CRON_SECRET`, every 6h) and confirm a few clean 200s.
 
 ### Next
 - [ ] **Sunday digest job:**
@@ -211,8 +255,6 @@ app/generated/prisma/   Generated client (output configured in schema)
   - [ ] send via Resend
 - [ ] **Sunday digest trigger**: a second workflow (`0 8 * * 0` UTC or similar)
       hitting a `/api/digest` endpoint, same auth pattern as ingest.
-- [ ] **Cleanup wiring**: run `cleanup.ts` (or a `/api/cleanup` route) on a
-      daily/weekly schedule.
 - [ ] **User preferences**: seed the singleton User row.
 
 ### Known fragilities to watch
@@ -220,7 +262,8 @@ app/generated/prisma/   Generated client (output configured in schema)
   weight bury a high-clusterSize major story.
 - Clustering threshold needs tuning (too loose → single-linkage chaining; too
   tight → missed dups). Start tight.
-- coverage signal is coarse (only 3 sources → clusterSize maxes at 3).
+- coverage signal scales with source count — now 6 sources, so clusterSize
+  maxes at 6 (was 3). Still coarse; more sources sharpen the popularity signal.
 - URL canonicalization is load-bearing for the "~300/week not 1120" volume
   estimate; verify tracking-param variants collapse.
 - Free-model categorization may drift; mitigated by strict prompt + enum
@@ -254,13 +297,41 @@ npx prisma generate
 ```
 
 ### Deployment secrets (cron trigger)
-The same `CRON_SECRET` value must live in two places:
-- **Vercel** → project env var `CRON_SECRET` (so the route can verify it).
-- **GitHub** → repo secret `CRON_SECRET` (so the Action can send it), plus
-  `INGEST_URL` = the deployed URL + `/api/ingest`
-  (e.g. `https://<app>.vercel.app/api/ingest`).
+`CRON_SECRET` must live wherever the request is **verified** and wherever it is
+**sent**:
+- **Vercel** (always) → project env var `CRON_SECRET`, so the route can verify
+  the incoming `Authorization: Bearer` header. Also set `DATABASE_URL`,
+  `GROQ_API_KEY`, `GROQ_MODEL`, `JINA_API_KEY` here (the `.env` file is
+  gitignored, so Vercel needs them set manually). The `postinstall` script runs
+  `prisma generate` during the Vercel build (the generated client is gitignored).
 
-Trigger manually anytime from the repo's **Actions → ingest → Run workflow**
-(`workflow_dispatch`); otherwise it runs every 6h. Each run's HTTP status and
-the JSON response body are printed in the Action log, and a non-200 fails the
-job (red X).
+### Scheduler — pick one
+The `/api/ingest` route is trigger-agnostic (POST + Bearer secret), so any
+scheduler works. Choose based on your GitHub plan:
+
+- **EasyCron (recommended on GitHub free tier).** Free-tier GitHub `schedule:`
+  is unreliable (see decisions log). Create one EasyCron job:
+  - URL: `https://<app>.vercel.app/api/ingest`
+  - Method: `POST`
+  - Header: `Authorization: Bearer <CRON_SECRET>`
+  - Cron: `0 */6 * * *` (EasyCron lets you set the timezone)
+
+  The secret now also lives in EasyCron's config — if EasyCron is ever
+  compromised, rotate `CRON_SECRET` in both Vercel and EasyCron.
+
+- **GitHub Actions `schedule:` (only on a paid GitHub plan).** Uncomment the
+  two `schedule:` lines in `ingest.yml`, and add repo secrets `CRON_SECRET`
+  (same value) + `INGEST_URL` = `https://<app>.vercel.app/api/ingest`. Paid
+  plans get prioritized, reliable scheduled runs.
+
+Regardless of scheduler, you can always trigger manually from the repo's
+**Actions → ingest → Run workflow** (`workflow_dispatch`) — handy for testing.
+Each run's HTTP status + JSON body print in the Action log; a non-200 fails the
+job (red X). (Manual dispatch needs the `CRON_SECRET` + `INGEST_URL` repo
+secrets set.)
+
+### Weekly cleanup
+`cleanup.yml` runs on GitHub's `schedule:` (Sun 03:00 UTC) — kept enabled since
+cron drift is harmless for a weekly delete. Add one repo secret: `CLEANUP_URL` =
+`https://<app>.vercel.app/api/cleanup` (reuses the existing `CRON_SECRET`; no new
+Vercel env var).

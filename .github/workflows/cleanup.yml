@@ -1,0 +1,33 @@
+name: cleanup
+
+# Weekly DB cleanup (delete articles > 2 weeks old). Unlike ingest, the
+# `schedule:` trigger stays ENABLED here: GitHub's free-tier cron drift is
+# irrelevant for a weekly delete (a few hours late, or an occasional skipped
+# week, just means old rows linger a little longer — harmless and self-heals).
+on:
+  schedule:
+    - cron: "0 3 * * 0" # Sundays 03:00 UTC
+  workflow_dispatch: {} # manual trigger from the Actions tab
+
+concurrency:
+  group: cleanup
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger cleanup endpoint
+        env:
+          CLEANUP_URL: ${{ secrets.CLEANUP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/body.json -w "%{http_code}" \
+            -X POST "$CLEANUP_URL" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            --max-time 60 --retry 2 --retry-delay 10)
+          echo "HTTP $code"
+          cat /tmp/body.json || true
+          echo
+          test "$code" = "200"

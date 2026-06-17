@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "crypto";
+import { isAuthorized } from "../../lib/auth";
 import { ingest } from "../../lib/ingest";
 
 // Prisma (pg adapter) + crypto need the Node runtime — NOT edge.
@@ -10,29 +10,12 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 /**
- * Constant-time bearer-token check. A plain `===` leaks the secret via
- * response-timing; timingSafeEqual compares in fixed time. We also length-gate
- * first because timingSafeEqual throws on unequal-length buffers.
- */
-function authorized(req: Request): boolean {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) return false; // fail closed if the secret isn't configured
-
-  const header = req.headers.get("authorization") ?? "";
-  const token = header.replace(/^Bearer\s+/i, "");
-
-  const a = Buffer.from(token);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-/**
- * POST /api/ingest — triggered by the GitHub Actions cron every 6h.
+ * POST /api/ingest — triggered by the cron (EasyCron / GitHub) every 6h.
  * Auth: `Authorization: Bearer <CRON_SECRET>`.
  * The pipeline is idempotent (URL-dedup), so a double-fire is harmless.
  */
 export async function POST(req: Request): Promise<Response> {
-  if (!authorized(req)) {
+  if (!isAuthorized(req)) {
     // Bare 401, no detail about what was expected.
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }

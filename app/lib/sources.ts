@@ -32,7 +32,10 @@ const ARS_ALLOWED_SECTIONS = new Set([
   "google",
 ]);
 
-function arsSection(link: string): string | null {
+// Both Ars and The Register encode the section as the first path segment of
+// the URL (arstechnica.com/ai/... -> "ai"; theregister.com/security/... ->
+// "security"). Shared helper; each source keeps its own allowlist.
+function firstPathSegment(link: string): string | null {
   try {
     return new URL(link).pathname.split("/").filter(Boolean)[0] ?? null;
   } catch {
@@ -44,8 +47,38 @@ const arstechnica: Source = {
   name: "arstechnica",
   url: "https://feeds.arstechnica.com/arstechnica/index",
   filter: (link) => {
-    const section = arsSection(link);
+    const section = firstPathSegment(link);
     return section !== null && ARS_ALLOWED_SECTIONS.has(section);
+  },
+};
+
+// --- The Register -----------------------------------------------------------
+// Clean one-liner snippets, but a broad enterprise-tech feed. Same
+// section-as-first-path-segment scheme as Ars. Allowlist (fails closed) keeps
+// the security/software/infra sections and drops science/hpc/public-sector/
+// offbeat. Unknown slugs simply never match, so over-listing is harmless.
+const REGISTER_ALLOWED_SECTIONS = new Set([
+  "security",
+  "cyber-crime",
+  "software",
+  "systems",
+  "networks",
+  "databases",
+  "ai-and-ml",
+  "os-platforms",
+  "cloud",
+  "devops",
+  "storage",
+  "virtualization",
+  "personal-tech",
+]);
+
+const theregister: Source = {
+  name: "theregister",
+  url: "https://www.theregister.com/headlines.atom",
+  filter: (link) => {
+    const section = firstPathSegment(link);
+    return section !== null && REGISTER_ALLOWED_SECTIONS.has(section);
   },
 };
 
@@ -65,6 +98,38 @@ const venturebeat: Source = {
   transformSnippet: (cleaned) => firstSentences(cleaned),
 };
 
-export const SOURCES: Source[] = [techcrunch, arstechnica, venturebeat];
+// --- BleepingComputer -------------------------------------------------------
+// Clean, tight security snippets out of the box. Only quirk: a trailing
+// "[...]" truncation marker that cleanText's ellipsis trim doesn't catch (it's
+// ASCII dots, not the … char), so strip it here.
+const bleepingcomputer: Source = {
+  name: "bleepingcomputer",
+  url: "https://www.bleepingcomputer.com/feed/",
+  transformSnippet: (cleaned) => cleaned.replace(/\s*\[\.\.\.\]\s*$/, "").trim(),
+};
 
-export { firstSentences, ARS_ALLOWED_SECTIONS, arsSection };
+// --- The Next Web -----------------------------------------------------------
+// Ships the full article body in contentSnippet (like VentureBeat) -> reuse the
+// same first-two-sentences truncation.
+const thenextweb: Source = {
+  name: "thenextweb",
+  url: "https://thenextweb.com/feed",
+  transformSnippet: (cleaned) => firstSentences(cleaned),
+};
+
+export const SOURCES: Source[] = [
+  techcrunch,
+  arstechnica,
+  venturebeat,
+  theregister,
+  bleepingcomputer,
+  thenextweb,
+];
+
+export {
+  firstSentences,
+  ARS_ALLOWED_SECTIONS,
+  REGISTER_ALLOWED_SECTIONS,
+  firstPathSegment,
+  firstPathSegment as arsSection,
+};
