@@ -17,9 +17,10 @@ ${CATEGORIES.join(", ")}
 
 RULES:
 - Choose every category that genuinely applies to an item. An item usually has 1-3 categories.
+- Assign a category ONLY if the item is truly ABOUT that area — not because of a loosely related keyword. (e.g. a story about social-media regulation or online-safety law is NOT "webdev"; a policy/business/society story merely set in tech is often none of these.)
 - "categories" MUST always be a JSON array, even when there is only one label.
 - Use ONLY strings from the allowed list above. Never invent, translate, pluralize, or capitalize labels.
-- If nothing fits, return an empty array [].
+- Prefer an empty array [] over forcing a weak or tangential match. If no category genuinely fits, return [].
 - Do NOT explain, summarize, or add any text outside the JSON.
 - Base the decision ONLY on the provided title and description. Do not use outside knowledge.
 

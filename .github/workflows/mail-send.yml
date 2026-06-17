@@ -1,0 +1,34 @@
+name: mail-send
+
+# Weekly digest send. Like cleanup, the `schedule:` trigger stays ENABLED:
+# GitHub's free-tier cron drift is harmless for a once-a-week email (a few
+# hours late just means the digest arrives a bit later). Runs after the week's
+# ingests have accumulated; reads the last 7 days, so cleanup running earlier
+# Sunday doesn't affect it.
+on:
+  schedule:
+    - cron: "0 4 * * 0" # Sundays 04:00 UTC
+  workflow_dispatch: {} # manual trigger from the Actions tab
+
+concurrency:
+  group: mail-send
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger digest send
+        env:
+          MAIL_URL: ${{ secrets.MAIL_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/body.json -w "%{http_code}" \
+            -X POST "$MAIL_URL" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            --max-time 60 --retry 2 --retry-delay 10)
+          echo "HTTP $code"
+          cat /tmp/body.json || true
+          echo
+          test "$code" = "200"
