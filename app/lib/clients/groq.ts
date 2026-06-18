@@ -1,13 +1,6 @@
 import "dotenv/config";
 import OpenAI from "openai";
 
-/**
- * LLM client — Groq via its OpenAI-compatible endpoint.
- *
- * Using the OpenAI SDK pointed at Groq keeps us provider-agnostic: switching
- * to OpenAI, Together, OpenRouter, or a local server later is a one-line
- * baseURL/apiKey/model change. Nothing outside this file knows it's Groq.
- */
 const apiKey = process.env["GROQ_API_KEY"];
 if (!apiKey) {
   throw new Error("GROQ_API_KEY is not set");
@@ -21,7 +14,6 @@ const client = new OpenAI({
 });
 
 export type ChatOptions = {
-  /** Lower = more deterministic. Default 0 for strict, repeatable labeling. */
   temperature?: number;
   /** Force JSON output when the model/endpoint supports it. */
   json?: boolean;

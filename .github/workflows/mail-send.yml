@@ -1,10 +1,4 @@
 name: mail-send
-
-# Weekly digest send. Like cleanup, the `schedule:` trigger stays ENABLED:
-# GitHub's free-tier cron drift is harmless for a once-a-week email (a few
-# hours late just means the digest arrives a bit later). Runs after the week's
-# ingests have accumulated; reads the last 7 days, so cleanup running earlier
-# Sunday doesn't affect it.
 on:
   schedule:
     - cron: "0 4 * * 0" # Sundays 04:00 UTC

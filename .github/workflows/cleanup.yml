@@ -1,9 +1,6 @@
 name: cleanup
 
-# Weekly DB cleanup (delete articles > 2 weeks old). Unlike ingest, the
-# `schedule:` trigger stays ENABLED here: GitHub's free-tier cron drift is
-# irrelevant for a weekly delete (a few hours late, or an occasional skipped
-# week, just means old rows linger a little longer — harmless and self-heals).
+# Weekly DB cleanup (delete articles > 2 weeks old).
 on:
   schedule:
     - cron: "0 3 * * 0" # Sundays 03:00 UTC

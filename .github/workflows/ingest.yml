@@ -1,7 +1,5 @@
 name: ingest
 
-# Trigger for the ingest pipeline (POSTs the secret to /api/ingest on Vercel).
-#
 # The `schedule:` trigger is COMMENTED OUT on purpose. GitHub's hosted cron is
 # best-effort and heavily deprioritizes free-tier scheduled runs — observed
 # drift: a 3h interval fired at 04:21 then 09:12 (~5h gap). On a paid GitHub
@@ -9,9 +7,7 @@ name: ingest
 # you're on one of those, just uncomment the two `schedule:` lines below and you
 # don't need an external scheduler. On the free tier, leave it commented and use
 # an external cron (EasyCron etc.) pointed at the same endpoint — see README.
-#
-# `workflow_dispatch` stays enabled either way, giving a one-click manual run
-# from the Actions tab for testing.
+
 on:
   # schedule:
   #   - cron: "0 */6 * * *" # every 6 hours, UTC (uncomment on a paid GitHub plan)
