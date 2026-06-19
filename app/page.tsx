@@ -251,20 +251,26 @@ export default function Home() {
                     <p className="mx-auto mt-8 max-w-3xl text-center text-lg leading-loose text-stone-600 dark:text-stone-400">
                         Set in Georgia.&nbsp;
                         <br />
-                        {stack.map((s, i) => (
-                            <span key={s}>
-                                <span className="font-mono text-[13px] text-stone-800 dark:text-stone-200">
-                                    {s}
-                                </span>
-                                {i < stack.length - 1 ? (
-                                    <span className="px-1.5 text-stone-400">
-                                        ·
+                        {stack.map((s, i) => {
+                            const last = i === stack.length - 1;
+                            return (
+                                <span key={s}>
+                                    {/* keep each name (and its trailing middot) on one line;
+                                        the break opportunity is the plain space between items */}
+                                    <span className="whitespace-nowrap">
+                                        <span className="font-mono text-[13px] text-stone-800 dark:text-stone-200">
+                                            {s}
+                                        </span>
+                                        {last ? (
+                                            "."
+                                        ) : (
+                                            <span className="text-stone-400">&nbsp;·</span>
+                                        )}
                                     </span>
-                                ) : (
-                                    "."
-                                )}
-                            </span>
-                        ))}
+                                    {!last && " "}
+                                </span>
+                            );
+                        })}
                     </p>
                 </section>
 
